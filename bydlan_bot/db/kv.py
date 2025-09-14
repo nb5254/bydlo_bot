@@ -23,3 +23,21 @@ async def get_value(key: Keys) -> str:
         sys.exit(1)
     
     return value.strip()
+
+def check_all_env_vars():
+    """Check if all required environment variables are set"""
+    missing = []
+    for key in Keys:
+        if not os.getenv(key.value):
+            missing.append(key.value)
+    
+    if missing:
+        print("❌ ERROR: Missing required environment variables:")
+        for var in missing:
+            print(f"  - {var}")
+        print("\n📝 Set these in Railway's Variables section:")
+        print("  1. Go to your Railway project")
+        print("  2. Click on your deployment")
+        print("  3. Go to 'Variables' tab")
+        print("  4. Add each variable with its value")
+        sys.exit(1)
