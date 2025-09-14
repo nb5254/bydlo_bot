@@ -4,6 +4,7 @@ import os
 import structlog
 from realm.anthropic import api as anthropic_api
 from bydlan import init as bydlan_init, graceful_shutdown
+from pyrogram.errors import FloodWait
 
 # Configure logging
 structlog.configure(
@@ -32,19 +33,31 @@ async def main():
         await anthropic_api.init()
         logger.info("Anthropic API initialized")
         
-        # Initialize Bydlan bot
-        await bydlan_init()
-        logger.info("Bydlan bot initialized")
+        # Initialize Bydlan bot with FloodWait handling
+        while True:
+            try:
+                await bydlan_init()
+                logger.info("Bydlan bot initialized")
+                break
+            except FloodWait as e:
+                logger.warning(f"FloodWait: waiting {e.value} seconds before retry")
+                await asyncio.sleep(e.value)
+                continue
         
         logger.info("Bot is running...")
         
         # Keep the bot running
         await asyncio.Event().wait()
         
+    except KeyboardInterrupt:
+        logger.info("Received interrupt signal")
     except Exception as e:
         logger.error("Error in main", error=e)
-        await graceful_shutdown()
-        raise
+    finally:
+        try:
+            await graceful_shutdown()
+        except Exception as e:
+            logger.error("Error during shutdown", error=e)
 
 if __name__ == "__main__":
     asyncio.run(main())
