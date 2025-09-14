@@ -13,6 +13,7 @@ from realm.anthropic.api import create_completion, AnthropicModel
 from realm.anthropic.models import AnthropicConversationMessage
 from realm.anthropic.system_prompts import BYDLAN_SYSTEM_PROMPT
 from realm.telegram.utils import split_if_large_message
+from realm.telegram.myno_debug import send_debug_message
 
 logger = structlog.get_logger()
 
@@ -25,7 +26,9 @@ _CONVERSATIONS = cachetools.Cache(maxsize=1000)
 
 
 async def graceful_shutdown():
-    await _CLIENT.stop()
+    global _CLIENT
+    if _CLIENT:
+        await _CLIENT.stop()
 
 
 async def init():
@@ -52,17 +55,18 @@ def get_bydlan() -> Client:
     return _CLIENT
 
 
-async def send_debug_message(msg: str):
-    from .myno_debug import send_debug_message
+async def send_debug_msg(msg: str):
+    """Send debug message - renamed to avoid import conflicts"""
     try:
         reply_messages = split_if_large_message(msg)
         for reply_msg in reply_messages:
             if len(reply_msg) == 0:
                 continue
-            await send_debug_message(msg)
+            await send_debug_message(reply_msg)
     except Exception:
         cut = msg[:256]
         await send_debug_message(f"failed to send debug message, go check logs mfer: {cut}")
+
 
 async def handle_group_message(client: Client, message: Message):
     """
@@ -109,8 +113,7 @@ def make_cache_key(chat_id, message_id) -> str:
     return f"{chat_id}:{message_id}"
 
 
-async def get_conversation(client: Client, message: Message) -> typing.List[
-    AnthropicConversationMessage]:
+async def get_conversation(client: Client, message: Message) -> typing.List[AnthropicConversationMessage]:
     """
     Either returns a cached conversation (containing bydlan responses) or creates a new one (traversing
     through parent messages if present).
@@ -139,7 +142,7 @@ async def get_conversation(client: Client, message: Message) -> typing.List[
         if not author:
             # this is likely another bot's message
             logger.warning("msg author not found", msg=parent_msg)
-            await send_debug_message(f"msg author not found: {parent_msg}")
+            await send_debug_msg(f"msg author not found: {parent_msg}")
             # just in case to avoid spamming
             await asyncio.sleep(0.3)
         elif author.username and author.username == BYDLAN_USERNAME:
@@ -148,7 +151,7 @@ async def get_conversation(client: Client, message: Message) -> typing.List[
         else:
             if not author.first_name:
                 logger.warning("author without a first name", msg=parent_msg)
-                await send_debug_message(f"author without a first name: {parent_msg}")
+                await send_debug_msg(f"author without a first name: {parent_msg}")
                 # just in case to avoid spamming
                 await asyncio.sleep(0.3)
 
