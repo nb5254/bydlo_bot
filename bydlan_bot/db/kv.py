@@ -13,24 +13,13 @@ async def get_value(key: Keys) -> str:
     value = os.getenv(key.value)
     
     if value is None or value.strip() == "":
-        print(f"ERROR: Environment variable {key.value} is not set!")
-        print("Required environment variables:")
-        for k in Keys:
-            print(f"  - {k.value}")
+        print(f"❌ ERROR: Environment variable {key.value} is not set!")
+        print("\n📝 Required environment variables:")
+        print("  - TG_API_ID: Your Telegram API ID (get from https://my.telegram.org)")
+        print("  - TG_API_HASH: Your Telegram API Hash")
+        print("  - TG_BOT_TOKEN: Your bot token from @BotFather")
+        print("  - ANTHROPIC_API_KEY: Your Anthropic/Claude API key")
+        print("\n⚠️  Set these in Railway's Variables section!")
         sys.exit(1)
     
     return value.strip()
-
-def check_all_env_vars():
-    """Check if all required environment variables are set"""
-    missing = []
-    for key in Keys:
-        if not os.getenv(key.value):
-            missing.append(key.value)
-    
-    if missing:
-        print("ERROR: Missing required environment variables:")
-        for var in missing:
-            print(f"  - {var}")
-        print("\nPlease set all required environment variables before starting the bot.")
-        sys.exit(1)
