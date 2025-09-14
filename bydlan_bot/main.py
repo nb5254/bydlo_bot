@@ -8,121 +8,121 @@ from pyrogram import idle
 from realm.anthropic import api as anthropic_api
 from bydlan import init as bydlan_init, graceful_shutdown, get_bydlan
 from pyrogram.errors import FloodWait
-from db.kv import check_all_env_vars
 
-# Configure logging - make it simpler for debugging
+# Configure logging - simpler for Railway
 structlog.configure(
     processors=[
-        structlog.stdlib.filter_by_level,
-        structlog.stdlib.add_logger_name,
         structlog.stdlib.add_log_level,
-        structlog.stdlib.PositionalArgumentsFormatter(),
         structlog.processors.TimeStamper(fmt="iso"),
-        structlog.processors.StackInfoRenderer(),
-        structlog.processors.format_exc_info,
-        structlog.processors.UnicodeDecoder(),
-        structlog.dev.ConsoleRenderer()  # Changed to Console for better readability
+        structlog.processors.dict_tracebacks,
+        structlog.dev.ConsoleRenderer()
     ],
     context_class=dict,
     logger_factory=structlog.stdlib.LoggerFactory(),
-    wrapper_class=structlog.stdlib.BoundLogger,
     cache_logger_on_first_use=True,
 )
 
 logger = structlog.get_logger()
 
-async def main():
-    # Check environment variables first
-    logger.info("Checking environment variables...")
-    check_all_env_vars()
-    logger.info("Environment variables validated")
+# Check environment variables
+def check_env_vars():
+    """Check if all required environment variables are set"""
+    required = ["TG_API_ID", "TG_API_HASH", "TG_BOT_TOKEN", "ANTHROPIC_API_KEY"]
+    missing = [var for var in required if not os.getenv(var)]
     
-    # Add random delay to avoid immediate rate limiting
-    delay = random.randint(5, 15)  # Reduced delay for faster testing
-    logger.info(f"Starting bot in {delay} seconds to avoid rate limits...")
+    if missing:
+        logger.error(f"❌ Missing environment variables: {missing}")
+        logger.info("Set these in Railway's Variables section!")
+        sys.exit(1)
+    
+    logger.info("✅ All environment variables present")
+
+async def main():
+    logger.info("=" * 50)
+    logger.info("STARTING BYDLAN BOT")
+    logger.info("=" * 50)
+    
+    # Check environment variables
+    check_env_vars()
+    
+    # Small delay to avoid rate limits
+    delay = random.randint(3, 10)
+    logger.info(f"Waiting {delay} seconds before connecting...")
     await asyncio.sleep(delay)
     
     try:
         # Initialize Anthropic API
-        logger.info("Initializing Anthropic API...")
+        logger.info("Connecting to Anthropic API...")
         await anthropic_api.init()
-        logger.info("Anthropic API initialized successfully")
+        logger.info("✅ Anthropic API connected")
         
-        # Initialize Bydlan bot with FloodWait handling
-        max_retries = 3
+        # Initialize Telegram bot
         retry_count = 0
+        max_retries = 3
         
         while retry_count < max_retries:
             try:
-                logger.info(f"Initializing Telegram bot (attempt {retry_count + 1}/{max_retries})...")
+                logger.info(f"Connecting to Telegram (attempt {retry_count + 1}/{max_retries})...")
                 await bydlan_init()
-                logger.info("Bydlan bot initialized successfully!")
+                logger.info("✅ Telegram bot connected")
                 break
                 
             except FloodWait as e:
                 retry_count += 1
-                wait_time = min(e.value, 900)  # Cap at 15 minutes
-                logger.warning(f"FloodWait: waiting {wait_time} seconds before retry (attempt {retry_count})")
+                wait_time = min(e.value, 300)
+                logger.warning(f"Rate limited. Waiting {wait_time} seconds...")
                 
                 if retry_count >= max_retries:
-                    logger.error("Max retries reached due to FloodWait. Bot will exit.")
-                    return
+                    logger.error("Too many rate limit errors. Exiting.")
+                    return 1
                     
                 await asyncio.sleep(wait_time)
-                continue
                 
             except Exception as e:
                 retry_count += 1
-                logger.error(f"Bot initialization failed (attempt {retry_count})", error=str(e), exc_info=True)
+                logger.error(f"Connection failed: {e}")
                 
                 if retry_count >= max_retries:
-                    logger.error("Max retries reached. Bot will exit.")
-                    raise
-                    
-                wait_time = min(30 * retry_count, 180)  # Reduced wait time for testing
+                    logger.error("Could not connect to Telegram after 3 attempts")
+                    return 1
+                
+                wait_time = 30 * retry_count
                 logger.info(f"Retrying in {wait_time} seconds...")
                 await asyncio.sleep(wait_time)
-                continue
         
-        # Check if client was initialized
+        # Check if bot is ready
         client = get_bydlan()
         if not client:
-            logger.error("Bot client not initialized properly")
-            return
+            logger.error("Bot client not initialized")
+            return 1
         
         logger.info("=" * 50)
-        logger.info("🎉 BOT IS RUNNING AND READY TO RESPOND! 🎉")
-        logger.info("Add the bot to a group and type 'быдлан hello' to test")
+        logger.info("🎉 BOT IS RUNNING! 🎉")
+        logger.info("Add bot to a Telegram group")
+        logger.info("Make bot admin in the group")
+        logger.info("Type: быдлан привет")
         logger.info("=" * 50)
         
-        # Use Pyrogram's idle() to keep the bot running
+        # Keep the bot running
         await idle()
         
-    except KeyboardInterrupt:
-        logger.info("Received keyboard interrupt")
     except Exception as e:
-        logger.error("Critical error in main", error=str(e), exc_info=True)
-        raise
+        logger.error(f"Fatal error: {e}", exc_info=True)
+        return 1
     finally:
-        logger.info("Shutting down bot...")
+        logger.info("Shutting down...")
         await graceful_shutdown()
-        logger.info("Bot shutdown complete")
-
-def run():
-    """Run the bot with proper signal handling"""
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    
-    # Set up signal handlers
-    for sig in (signal.SIGTERM, signal.SIGINT):
-        signal.signal(sig, lambda s, f: loop.stop())
-    
-    try:
-        loop.run_until_complete(main())
-    except KeyboardInterrupt:
-        logger.info("Bot stopped by user")
-    finally:
-        loop.close()
+        logger.info("Shutdown complete")
+        return 0
 
 if __name__ == "__main__":
-    run()
+    # Simple runner for Railway
+    try:
+        exit_code = asyncio.run(main())
+        sys.exit(exit_code or 0)
+    except KeyboardInterrupt:
+        print("\nBot stopped by user")
+        sys.exit(0)
+    except Exception as e:
+        print(f"Failed to run bot: {e}")
+        sys.exit(1)
