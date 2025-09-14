@@ -21,14 +21,17 @@ BYDLAN_USERNAME = "BydlanBot"
 
 BYDLAN_PREFIX = "быдлан"
 
-_CLIENT: Client
+_CLIENT: Client = None
 _CONVERSATIONS = cachetools.Cache(maxsize=1000)
 
 
 async def graceful_shutdown():
     global _CLIENT
     if _CLIENT:
-        await _CLIENT.stop()
+        try:
+            await _CLIENT.stop()
+        except Exception as e:
+            logger.error("Error during shutdown", error=e)
 
 
 async def init():
