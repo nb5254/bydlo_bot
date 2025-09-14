@@ -17,7 +17,8 @@ from realm.telegram.myno_debug import send_debug_message
 
 logger = structlog.get_logger()
 
-BYDLAN_USERNAME = "BydlanBot"
+# Will be set dynamically after bot starts
+BYDLAN_USERNAME = None
 
 BYDLAN_PREFIX = "быдлан"
 
@@ -30,27 +31,46 @@ async def graceful_shutdown():
     if _CLIENT:
         try:
             await _CLIENT.stop()
+            logger.info("Bot stopped gracefully")
         except Exception as e:
             logger.error("Error during shutdown", error=e)
 
 
 async def init():
+    global _CLIENT, BYDLAN_USERNAME
+    
+    logger.info("Initializing Telegram client...")
+    
     # in-memory session will be discarded as soon as the client stops
     client = Client("bydlan", in_memory=True, workers=4)
 
     # Set secrets
-    client.api_id = int(await kv.get_value(kv.Keys.tg_client_api_id))
-    client.api_hash = await kv.get_value(kv.Keys.tg_client_api_hash)
-    client.bot_token = await kv.get_value(kv.Keys.tg_bot_token_bydlan)
+    try:
+        client.api_id = int(await kv.get_value(kv.Keys.tg_client_api_id))
+        client.api_hash = await kv.get_value(kv.Keys.tg_client_api_hash)
+        client.bot_token = await kv.get_value(kv.Keys.tg_bot_token_bydlan)
+        
+        logger.info("Credentials loaded successfully")
+    except Exception as e:
+        logger.error("Failed to load credentials", error=e)
+        raise
 
     # Register handlers
     client.add_handler(MessageHandler(handle_group_message, filters=filters.group))
 
     # Start client, so it's ready to be used
+    logger.info("Starting Telegram client...")
     await client.start()
-    logger.info("bydlan started")
-
-    global _CLIENT
+    
+    # Get bot info and set username
+    try:
+        bot_info = await client.get_me()
+        BYDLAN_USERNAME = bot_info.username
+        logger.info(f"Bot started successfully as @{BYDLAN_USERNAME}")
+    except Exception as e:
+        logger.error("Failed to get bot info", error=e)
+        BYDLAN_USERNAME = "BydlanBot"  # fallback
+    
     _CLIENT = client
 
 
@@ -84,15 +104,20 @@ async def handle_group_message(client: Client, message: Message):
         if not should_react(message):
             return
 
+        logger.info("Processing message from group", chat_id=message.chat.id)
+
         # Gather context
         messages = await get_conversation(client, message)
 
         # Add current message to the context
         # and strip bydlan prefix from it so he doesn't get triggered
-        messages.append(AnthropicConversationMessage.from_group_chat_text(message.from_user.first_name,
-                                                                          strip_bydlan_prefix(message.text)))
+        user_name = message.from_user.first_name if message.from_user else "Unknown"
+        messages.append(AnthropicConversationMessage.from_group_chat_text(
+            user_name, strip_bydlan_prefix(message.text)
+        ))
 
         # Get response from anthropic
+        logger.info("Getting response from Claude...")
         bydlan_response = await create_completion(AnthropicModel.CLAUDE_3_7_SONNET_LATEST, BYDLAN_SYSTEM_PROMPT,
                                                   messages)
         messages.append(bydlan_response)
@@ -107,9 +132,14 @@ async def handle_group_message(client: Client, message: Message):
             del _CONVERSATIONS[key]
         _CONVERSATIONS[make_cache_key(message.chat.id, last_sent_msg.id)] = messages
 
+        logger.info("Message processed successfully")
+
     except Exception as e:
         logger.error("failed to handle group message", error=e)
-        await message.reply(f"еррор ебана\n\n{e}", reply_to_message_id=message.id)
+        try:
+            await message.reply(f"еррор ебана\n\n{e}", reply_to_message_id=message.id)
+        except Exception as reply_error:
+            logger.error("Failed to send error message", error=reply_error)
 
 
 def make_cache_key(chat_id, message_id) -> str:
@@ -180,7 +210,10 @@ def should_react(message: Message) -> bool:
     if message.text.lower().startswith(BYDLAN_PREFIX):
         return True
     parent_message = message.reply_to_message
-    if parent_message is not None and parent_message.from_user is not None and parent_message.from_user.username is not None and parent_message.from_user.username == BYDLAN_USERNAME:
+    if (parent_message is not None 
+        and parent_message.from_user is not None 
+        and parent_message.from_user.username is not None 
+        and parent_message.from_user.username == BYDLAN_USERNAME):
         return True
     return False
 
