@@ -1,10 +1,11 @@
 import asyncio
 import signal
 import os
+import sys
 import structlog
 import random
 from realm.anthropic import api as anthropic_api
-from bydlan import init as bydlan_init, graceful_shutdown
+from bydlan import init as bydlan_init, graceful_shutdown, get_bydlan
 from pyrogram.errors import FloodWait
 
 # Configure logging
@@ -26,8 +27,21 @@ structlog.configure(
     cache_logger_on_first_use=True,
 )
 
+# Global shutdown event
+shutdown_event = asyncio.Event()
+
+def signal_handler(sig, frame):
+    """Handle shutdown signals"""
+    logger = structlog.get_logger()
+    logger.info(f"Received signal {sig}, initiating shutdown...")
+    shutdown_event.set()
+
 async def main():
     logger = structlog.get_logger()
+    
+    # Set up signal handlers
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
     
     # Add random delay to avoid immediate rate limiting
     delay = random.randint(10, 30)
@@ -79,8 +93,15 @@ async def main():
         logger.info("🎉 Bot is running and ready to respond!")
         logger.info("Add the bot to a group and type 'быдлан hello' to test")
         
-        # Keep the bot running
-        await asyncio.Event().wait()
+        # Keep the bot running until shutdown signal
+        client = get_bydlan()
+        if client:
+            # Use Pyrogram's idle() or wait for shutdown event
+            await shutdown_event.wait()
+            logger.info("Shutdown signal received")
+        else:
+            logger.error("Bot client not initialized properly")
+            return
         
     except KeyboardInterrupt:
         logger.info("Received interrupt signal")
@@ -96,4 +117,9 @@ async def main():
             logger.error("Error during shutdown", error=e)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    # Use asyncio.run() properly
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("Bot stopped by user")
+        sys.exit(0)
